@@ -1,62 +1,60 @@
 from flask import Flask, request, jsonify, send_from_directory
-import re
-import random
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+import numpy as np
+import pickle
 import json
+import random
 
-class SimpleAssistant:
-    def __init__(self):
-        self.knowledge_base = {
-            "سلام": [
-                "سلام! چطور می‌توانم کمکت کنم؟",
-                "درود! چه کمکی از من ساخته است؟"
-            ],
-            "خوبی": [
-                "ممنونم، خوبم. شما چطورید؟",
-                "خوب هستم، امیدوارم شما هم خوب باشید"
-            ],
-            "اسمت چیه": [
-                "من یک دستیار هوش مصنوعی هستم",
-                "اسم من دستیار است"
-            ]
-        }
-        self.default_responses = [
-            "دقیقا منظورتان را متوجه نشدم",
-            "می‌توانید واضح‌تر توضیح دهید؟",
-            "سوال جالبی است!"
-        ]
-
-    def preprocess_input(self, text):
-        text = text.lower().strip()
-        text = re.sub(r'[^\w\s]', '', text)
-        return text
-
-    def find_best_response(self, processed_input):
-        for key, responses in self.knowledge_base.items():
-            if key in processed_input:
-                return random.choice(responses)
-        return random.choice(self.default_responses)
-
-    def generate_response(self, user_input):
-        processed_input = self.preprocess_input(user_input)
-        response = self.find_best_response(processed_input)
-        return {
-            "sender": "assistant",
-            "message": response,
-            "timestamp": "now"
-        }
-
-assistant = SimpleAssistant()
 app = Flask(__name__, static_url_path='/static')
+
+# load trained model
+model = load_model('chat_model.keras')
+
+# load tokenizer object
+with open('tokenizer.pickle', 'rb') as handle:
+    tokenizer = pickle.load(handle)
+
+# load label encoder object
+with open('label_encoder.pickle', 'rb') as enc:
+    lbl_encoder = pickle.load(enc)
+
+# load intents file
+with open('knowledge_base.json') as file:
+    data = json.load(file)
+
+max_len = 20
+
+def generate_response(user_input):
+    inp = user_input
+    sequence = tokenizer.texts_to_sequences([inp])
+    padded_sequence = pad_sequences(sequence, truncating='post', maxlen=max_len)
+    result = model.predict(padded_sequence)
+    tag = lbl_encoder.inverse_transform([np.argmax(result)])
+
+    for i in data['intents']:
+        if i['tag'] == tag:
+            response = np.random.choice(i['responses'])
+            break
+
+    return {
+        "sender": "assistant",
+        "message": response,
+        "timestamp": "now"
+    }
+
 
 @app.route('/')
 def index():
     return send_from_directory('.', 'index.html')
 
+
 @app.route('/get_response', methods=['POST'])
 def get_response():
     user_message = request.json['message']
-    response = assistant.generate_response(user_message)
+    response = generate_response(user_message)
     return jsonify(response)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
